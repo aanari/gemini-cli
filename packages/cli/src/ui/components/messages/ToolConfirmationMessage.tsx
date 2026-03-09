@@ -21,6 +21,8 @@ import {
 import type { RadioSelectItem } from '../shared/RadioButtonSelect.js';
 import { useToolActions } from '../../contexts/ToolActionsContext.js';
 import { RadioButtonSelect } from '../shared/RadioButtonSelect.js';
+import { useUIActions } from '../../contexts/UIActionsContext.js';
+import { useUIState } from '../../contexts/UIStateContext.js';
 import { MaxSizedBox, MINIMUM_MAX_HEIGHT } from '../shared/MaxSizedBox.js';
 import {
   sanitizeForDisplay,
@@ -70,6 +72,8 @@ export const ToolConfirmationMessage: React.FC<
 }) => {
   const keyMatchers = useKeyMatchers();
   const { confirm, isDiffingEnabled } = useToolActions();
+  const uiActions = useUIActions();
+  const { constrainHeight } = useUIState();
   const [mcpDetailsExpansionState, setMcpDetailsExpansionState] = useState<{
     callId: string;
     expanded: boolean;
@@ -180,6 +184,12 @@ export const ToolConfirmationMessage: React.FC<
       }
       if (keyMatchers[Command.ESCAPE](key)) {
         handleConfirm(ToolConfirmationOutcome.Cancel);
+        if (!constrainHeight) {
+          setTimeout(() => {
+            uiActions.setConstrainHeight(true);
+            uiActions.refreshStatic();
+          }, 0);
+        }
         return true;
       }
       if (keyMatchers[Command.QUIT](key)) {
