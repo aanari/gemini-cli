@@ -2666,4 +2666,664 @@ describe('vim-buffer-actions', () => {
       });
     });
   });
+
+  // ─── Text-object actions ────────────────────────────────────────────────────
+
+  describe('vim_delete_text_object', () => {
+    // iw / aw – word text objects
+    describe('iw', () => {
+      it('should delete inner word when cursor is on the word', () => {
+        const state = createTestState(['hello world'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: 'w' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe(' world');
+        expect(result.cursorCol).toBe(0);
+        expect(result.yankRegister?.text).toBe('hello');
+      });
+
+      it('should delete inner word at end of string (no trailing space)', () => {
+        const state = createTestState(['hello world'], 0, 7);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: 'w' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hello ');
+        expect(result.yankRegister?.text).toBe('world');
+      });
+    });
+
+    describe('aw', () => {
+      it('should delete a word including trailing space', () => {
+        const state = createTestState(['hello world'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'a', target: 'w' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('world');
+        expect(result.yankRegister?.text).toBe('hello ');
+      });
+
+      it('should delete a word including leading space when no trailing space exists', () => {
+        const state = createTestState(['hello world'], 0, 7);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'a', target: 'w' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hello');
+        expect(result.yankRegister?.text).toBe(' world');
+      });
+    });
+
+    // i" / a" – double quote text objects
+    describe('i"', () => {
+      it('should delete content inside double quotes', () => {
+        const state = createTestState(['say "hello world"'], 0, 7);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: '"' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('say ""');
+        expect(result.yankRegister?.text).toBe('hello world');
+      });
+
+      it('should be a no-op when cursor is not inside quotes', () => {
+        const state = createTestState(['no quotes here'], 0, 3);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: '"' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('no quotes here');
+      });
+    });
+
+    describe('a"', () => {
+      it('should delete including surrounding double quotes', () => {
+        const state = createTestState(['say "hello" there'], 0, 7);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'a', target: '"' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('say  there');
+        expect(result.yankRegister?.text).toBe('"hello"');
+      });
+    });
+
+    // i' / a' – single quote text objects
+    describe("i'", () => {
+      it('should delete content inside single quotes', () => {
+        const state = createTestState(["say 'fine' ok"], 0, 6);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: "'" },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe("say '' ok");
+        expect(result.yankRegister?.text).toBe('fine');
+      });
+    });
+
+    describe("a'", () => {
+      it('should delete including surrounding single quotes', () => {
+        const state = createTestState(["say 'hi' there"], 0, 5);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'a', target: "'" },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('say  there');
+        expect(result.yankRegister?.text).toBe("'hi'");
+      });
+    });
+
+    // i( / a( – paren text objects
+    describe('i(', () => {
+      it('should delete content inside parens', () => {
+        const state = createTestState(['foo(bar, baz)'], 0, 5);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: '(' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('foo()');
+        expect(result.yankRegister?.text).toBe('bar, baz');
+      });
+
+      it('should be a no-op when cursor is not inside parens', () => {
+        const state = createTestState(['no parens here'], 0, 3);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: '(' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('no parens here');
+      });
+
+      it('should handle ) as an alias for (', () => {
+        const state = createTestState(['foo(bar)'], 0, 5);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: ')' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('foo()');
+      });
+    });
+
+    describe('a(', () => {
+      it('should delete including surrounding parens', () => {
+        const state = createTestState(['foo(bar)'], 0, 5);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'a', target: '(' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('foo');
+        expect(result.yankRegister?.text).toBe('(bar)');
+      });
+    });
+
+    // i[ / a[ – bracket text objects
+    describe('i[', () => {
+      it('should delete content inside brackets', () => {
+        const state = createTestState(['arr[0, 1]'], 0, 5);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: '[' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('arr[]');
+        expect(result.yankRegister?.text).toBe('0, 1');
+      });
+
+      it('should handle ] as an alias for [', () => {
+        const state = createTestState(['arr[0]'], 0, 4);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: ']' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('arr[]');
+      });
+    });
+
+    describe('a[', () => {
+      it('should delete including surrounding brackets', () => {
+        const state = createTestState(['arr[0]'], 0, 4);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'a', target: '[' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('arr');
+        expect(result.yankRegister?.text).toBe('[0]');
+      });
+    });
+
+    // i{ / a{ – brace text objects
+    describe('i{', () => {
+      it('should delete content inside braces', () => {
+        const state = createTestState(['{key: val}'], 0, 3);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: '{' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('{}');
+        expect(result.yankRegister?.text).toBe('key: val');
+      });
+
+      it('should handle } as an alias for {', () => {
+        const state = createTestState(['{x}'], 0, 1);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: '}' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('{}');
+      });
+    });
+
+    describe('a{', () => {
+      it('should delete including surrounding braces', () => {
+        const state = createTestState(['{x}'], 0, 1);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'a', target: '{' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('');
+        expect(result.yankRegister?.text).toBe('{x}');
+      });
+    });
+
+    // i` / a` – backtick text objects
+    describe('i`', () => {
+      it('should delete content inside backticks', () => {
+        const state = createTestState(['run `cmd arg`'], 0, 6);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'i', target: '`' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('run ``');
+        expect(result.yankRegister?.text).toBe('cmd arg');
+      });
+    });
+
+    describe('a`', () => {
+      it('should delete including surrounding backticks', () => {
+        const state = createTestState(['run `cmd` now'], 0, 6);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'a', target: '`' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('run  now');
+        expect(result.yankRegister?.text).toBe('`cmd`');
+      });
+    });
+
+    describe('aw (cursor on whitespace)', () => {
+      it('should include the following word when cursor is on a space', () => {
+        const state = createTestState(['foo bar'], 0, 3);
+        const result = handleVimAction(state, {
+          type: 'vim_delete_text_object' as const,
+          payload: { scope: 'a', target: 'w' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('foo');
+        expect(result.yankRegister?.text).toBe(' bar');
+      });
+    });
+
+    it('should be a no-op for an unknown target', () => {
+      const state = createTestState(['hello'], 0, 2);
+      const result = handleVimAction(state, {
+        type: 'vim_delete_text_object' as const,
+        payload: { scope: 'i', target: 'z' },
+      });
+      expect(result).toHaveOnlyValidCharacters();
+      expect(result.lines[0]).toBe('hello');
+    });
+
+    it('should clamp cursor after deletion on short line', () => {
+      const state = createTestState(['hi'], 0, 0);
+      const result = handleVimAction(state, {
+        type: 'vim_delete_text_object' as const,
+        payload: { scope: 'i', target: 'w' },
+      });
+      expect(result).toHaveOnlyValidCharacters();
+      expect(result.cursorCol).toBe(0);
+    });
+  });
+
+  describe('vim_change_text_object', () => {
+    describe('iw', () => {
+      it('should delete inner word and leave cursor at start', () => {
+        const state = createTestState(['hello world'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'i', target: 'w' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe(' world');
+        expect(result.cursorCol).toBe(0);
+        expect(result.yankRegister?.text).toBe('hello');
+      });
+    });
+
+    describe('aw', () => {
+      it('should delete a word with trailing space', () => {
+        const state = createTestState(['foo bar baz'], 0, 1);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'a', target: 'w' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('bar baz');
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+
+    describe('i"', () => {
+      it('should delete inside quotes for change', () => {
+        const state = createTestState(['"old value"'], 0, 4);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'i', target: '"' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('""');
+        expect(result.yankRegister?.text).toBe('old value');
+      });
+    });
+
+    describe("a'", () => {
+      it('should delete including surrounding single quotes for change', () => {
+        const state = createTestState(["key='val'"], 0, 5);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'a', target: "'" },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('key=');
+        expect(result.yankRegister?.text).toBe("'val'");
+      });
+    });
+
+    describe('i(', () => {
+      it('should delete content inside parens for change', () => {
+        const state = createTestState(['fn(arg1, arg2)'], 0, 5);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'i', target: '(' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('fn()');
+        expect(result.yankRegister?.text).toBe('arg1, arg2');
+      });
+    });
+
+    describe('a(', () => {
+      it('should delete including parens for change', () => {
+        const state = createTestState(['fn(x)'], 0, 3);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'a', target: ')' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('fn');
+        expect(result.yankRegister?.text).toBe('(x)');
+      });
+    });
+
+    describe('i[', () => {
+      it('should delete content inside brackets for change', () => {
+        const state = createTestState(['x[0]'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'i', target: '[' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('x[]');
+        expect(result.yankRegister?.text).toBe('0');
+      });
+    });
+
+    describe('a[', () => {
+      it('should delete including brackets for change', () => {
+        const state = createTestState(['x[0]'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'a', target: ']' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('x');
+        expect(result.yankRegister?.text).toBe('[0]');
+      });
+    });
+
+    describe('i{', () => {
+      it('should delete content inside braces for change', () => {
+        const state = createTestState(['{a: 1}'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'i', target: '{' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('{}');
+        expect(result.yankRegister?.text).toBe('a: 1');
+      });
+    });
+
+    describe('a{', () => {
+      it('should delete including braces for change', () => {
+        const state = createTestState(['{a}'], 0, 1);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'a', target: '}' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('');
+        expect(result.yankRegister?.text).toBe('{a}');
+      });
+    });
+
+    // i` – backtick text object
+    describe('i`', () => {
+      it('should delete content inside backticks for change', () => {
+        const state = createTestState(['run `cmd`'], 0, 5);
+        const result = handleVimAction(state, {
+          type: 'vim_change_text_object' as const,
+          payload: { scope: 'i', target: '`' },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('run ``');
+        expect(result.yankRegister?.text).toBe('cmd');
+      });
+    });
+
+    it('should be a no-op when target not found', () => {
+      const state = createTestState(['hello'], 0, 2);
+      const result = handleVimAction(state, {
+        type: 'vim_change_text_object' as const,
+        payload: { scope: 'i', target: '(' },
+      });
+      expect(result).toHaveOnlyValidCharacters();
+      expect(result.lines[0]).toBe('hello');
+    });
+  });
+
+  describe('vim_yank_text_object', () => {
+    describe('iw', () => {
+      it('should yank inner word without modifying buffer', () => {
+        const state = createTestState(['hello world'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'i', target: 'w' },
+        });
+        // Buffer should not be modified
+        expect(result.lines[0]).toBe('hello world');
+        expect(result.cursorCol).toBe(2);
+        expect(result.yankRegister?.text).toBe('hello');
+      });
+    });
+
+    describe('aw', () => {
+      it('should yank a word with trailing space', () => {
+        const state = createTestState(['hello world'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'a', target: 'w' },
+        });
+        expect(result.lines[0]).toBe('hello world');
+        expect(result.yankRegister?.text).toBe('hello ');
+      });
+    });
+
+    describe('i"', () => {
+      it('should yank inside double quotes without modifying buffer', () => {
+        const state = createTestState(['"quoted text"'], 0, 4);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'i', target: '"' },
+        });
+        expect(result.lines[0]).toBe('"quoted text"');
+        expect(result.yankRegister?.text).toBe('quoted text');
+      });
+    });
+
+    describe('a"', () => {
+      it('should yank including double quotes', () => {
+        const state = createTestState(['"hi"'], 0, 1);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'a', target: '"' },
+        });
+        expect(result.lines[0]).toBe('"hi"');
+        expect(result.yankRegister?.text).toBe('"hi"');
+      });
+    });
+
+    describe("i'", () => {
+      it('should yank inside single quotes', () => {
+        const state = createTestState(["'test'"], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'i', target: "'" },
+        });
+        expect(result.lines[0]).toBe("'test'");
+        expect(result.yankRegister?.text).toBe('test');
+      });
+    });
+
+    describe("a'", () => {
+      it('should yank including single quotes', () => {
+        const state = createTestState(["'hi'"], 0, 1);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'a', target: "'" },
+        });
+        expect(result.lines[0]).toBe("'hi'");
+        expect(result.yankRegister?.text).toBe("'hi'");
+      });
+    });
+
+    describe('i(', () => {
+      it('should yank inside parens without modifying buffer', () => {
+        const state = createTestState(['f(a, b)'], 0, 3);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'i', target: '(' },
+        });
+        expect(result.lines[0]).toBe('f(a, b)');
+        expect(result.yankRegister?.text).toBe('a, b');
+      });
+    });
+
+    describe('a(', () => {
+      it('should yank including parens', () => {
+        const state = createTestState(['f(x)'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'a', target: ')' },
+        });
+        expect(result.lines[0]).toBe('f(x)');
+        expect(result.yankRegister?.text).toBe('(x)');
+      });
+    });
+
+    describe('i[', () => {
+      it('should yank inside brackets', () => {
+        const state = createTestState(['a[1, 2]'], 0, 3);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'i', target: '[' },
+        });
+        expect(result.lines[0]).toBe('a[1, 2]');
+        expect(result.yankRegister?.text).toBe('1, 2');
+      });
+    });
+
+    describe('a[', () => {
+      it('should yank including brackets', () => {
+        const state = createTestState(['a[x]'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'a', target: ']' },
+        });
+        expect(result.lines[0]).toBe('a[x]');
+        expect(result.yankRegister?.text).toBe('[x]');
+      });
+    });
+
+    describe('i{', () => {
+      it('should yank inside braces', () => {
+        const state = createTestState(['{k: v}'], 0, 2);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'i', target: '{' },
+        });
+        expect(result.lines[0]).toBe('{k: v}');
+        expect(result.yankRegister?.text).toBe('k: v');
+      });
+    });
+
+    describe('a{', () => {
+      it('should yank including braces', () => {
+        const state = createTestState(['{x}'], 0, 1);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'a', target: '}' },
+        });
+        expect(result.lines[0]).toBe('{x}');
+        expect(result.yankRegister?.text).toBe('{x}');
+      });
+    });
+
+    // i` / a` – backtick text objects
+    describe('i`', () => {
+      it('should yank content inside backticks', () => {
+        const state = createTestState(['echo `pwd`'], 0, 6);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'i', target: '`' },
+        });
+        expect(result.lines[0]).toBe('echo `pwd`');
+        expect(result.yankRegister?.text).toBe('pwd');
+        expect(result.yankRegister?.linewise).toBe(false);
+      });
+    });
+
+    describe('a`', () => {
+      it('should yank including surrounding backticks', () => {
+        const state = createTestState(['echo `pwd`'], 0, 6);
+        const result = handleVimAction(state, {
+          type: 'vim_yank_text_object' as const,
+          payload: { scope: 'a', target: '`' },
+        });
+        expect(result.lines[0]).toBe('echo `pwd`');
+        expect(result.yankRegister?.text).toBe('`pwd`');
+      });
+    });
+
+    it('should be a no-op for an unknown target', () => {
+      const state = createTestState(['hello'], 0, 2);
+      const result = handleVimAction(state, {
+        type: 'vim_yank_text_object' as const,
+        payload: { scope: 'i', target: 'z' },
+      });
+      expect(result.lines[0]).toBe('hello');
+      expect(result.yankRegister).toBeNull();
+    });
+
+    it('should be a no-op when no enclosing delimiter found', () => {
+      const state = createTestState(['hello'], 0, 2);
+      const result = handleVimAction(state, {
+        type: 'vim_yank_text_object' as const,
+        payload: { scope: 'i', target: '(' },
+      });
+      expect(result.lines[0]).toBe('hello');
+      expect(result.yankRegister).toBeNull();
+    });
+
+    it('should be a no-op on empty line for iw', () => {
+      const state = createTestState([''], 0, 0);
+      const result = handleVimAction(state, {
+        type: 'vim_yank_text_object' as const,
+        payload: { scope: 'i', target: 'w' },
+      });
+      expect(result.lines[0]).toBe('');
+      expect(result.yankRegister).toBeNull();
+    });
+  });
 });

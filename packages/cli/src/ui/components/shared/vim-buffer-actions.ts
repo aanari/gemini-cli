@@ -86,6 +86,9 @@ export type VimAction = Extract<
   | { type: 'vim_yank_to_end_of_line' }
   | { type: 'vim_paste_after' }
   | { type: 'vim_paste_before' }
+  | { type: 'vim_delete_text_object' }
+  | { type: 'vim_change_text_object' }
+  | { type: 'vim_yank_text_object' }
 >;
 
 /**
@@ -159,6 +162,189 @@ function extractRange(
       .join(''),
   );
   return parts.join('\n');
+}
+
+/**
+ * Find the range for `iw`/`aw` text objects.
+ * Returns { startCol, endCol } (endCol is exclusive) or null if the line is
+ * empty or the column is out of bounds.
+ */
+function findWordTextObject(
+  line: string,
+  col: number,
+  scope: 'i' | 'a',
+): { startCol: number; endCol: number } | null {
+  const cps = toCodePoints(line);
+  const len = cps.length;
+  if (len === 0 || col >= len) return null;
+
+  const isWordChar = (c: string) => /\w/.test(c);
+  const isSpace = (c: string) => /[ \t]/.test(c);
+
+  const ch = cps[col];
+
+  if (isWordChar(ch)) {
+    let start = col;
+    let end = col + 1;
+    while (start > 0 && isWordChar(cps[start - 1])) start--;
+    while (end < len && isWordChar(cps[end])) end++;
+
+    if (scope === 'a') {
+      // Prefer trailing whitespace; fall back to leading whitespace.
+      const trailingEnd = end;
+      while (end < len && isSpace(cps[end])) end++;
+      if (end === trailingEnd) {
+        while (start > 0 && isSpace(cps[start - 1])) start--;
+      }
+    }
+    return { startCol: start, endCol: end };
+  } else if (isSpace(ch)) {
+    let start = col;
+    let end = col + 1;
+    while (start > 0 && isSpace(cps[start - 1])) start--;
+    while (end < len && isSpace(cps[end])) end++;
+
+    if (scope === 'a') {
+      // Include the following word.
+      while (end < len && isWordChar(cps[end])) end++;
+    }
+    return { startCol: start, endCol: end };
+  } else {
+    // Punctuation / other non-space, non-word run.
+    let start = col;
+    let end = col + 1;
+    while (start > 0 && !isWordChar(cps[start - 1]) && !isSpace(cps[start - 1]))
+      start--;
+    while (end < len && !isWordChar(cps[end]) && !isSpace(cps[end])) end++;
+
+    if (scope === 'a') {
+      const trailingEnd = end;
+      while (end < len && isSpace(cps[end])) end++;
+      if (end === trailingEnd) {
+        while (start > 0 && isSpace(cps[start - 1])) start--;
+      }
+    }
+    return { startCol: start, endCol: end };
+  }
+}
+
+/**
+ * Find the range for `i"`/`a"`, `i'`/`a'`, `i\``/`a\`` text objects.
+ * Pairs are identified by scanning for consecutive occurrences of `quoteChar`.
+ * Returns { startCol, endCol } (endCol is exclusive) or null if the cursor
+ * is not inside a matching pair.
+ */
+function findQuoteTextObject(
+  line: string,
+  col: number,
+  scope: 'i' | 'a',
+  quoteChar: string,
+): { startCol: number; endCol: number } | null {
+  const cps = toCodePoints(line);
+  const len = cps.length;
+
+  const positions: number[] = [];
+  for (let i = 0; i < len; i++) {
+    if (cps[i] === quoteChar) positions.push(i);
+  }
+
+  if (positions.length < 2) return null;
+
+  // Walk through pairs (positions[0],positions[1]), (positions[2],positions[3])…
+  for (let pi = 0; pi + 1 < positions.length; pi += 2) {
+    const open = positions[pi];
+    const close = positions[pi + 1];
+    if (col >= open && col <= close) {
+      return scope === 'i'
+        ? { startCol: open + 1, endCol: close }
+        : { startCol: open, endCol: close + 1 };
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the range for `i(`/`a(`, `i[`/`a[`, `i{`/`a{` text objects.
+ * Scans outward from the cursor to find the innermost enclosing bracket pair.
+ * Returns { startCol, endCol } (endCol is exclusive) or null if no enclosing
+ * pair exists.
+ */
+function findBracketTextObject(
+  line: string,
+  col: number,
+  scope: 'i' | 'a',
+  openChar: string,
+  closeChar: string,
+): { startCol: number; endCol: number } | null {
+  const cps = toCodePoints(line);
+  const len = cps.length;
+
+  // Search backward for the matching open bracket.
+  let depth = 0;
+  let openPos = -1;
+  for (let i = col; i >= 0; i--) {
+    if (cps[i] === closeChar) {
+      depth++;
+    } else if (cps[i] === openChar) {
+      if (depth === 0) {
+        openPos = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (openPos === -1) return null;
+
+  // Search forward from the open bracket for its matching close.
+  depth = 0;
+  let closePos = -1;
+  for (let i = openPos; i < len; i++) {
+    if (cps[i] === openChar) {
+      depth++;
+    } else if (cps[i] === closeChar) {
+      depth--;
+      if (depth === 0) {
+        closePos = i;
+        break;
+      }
+    }
+  }
+  if (closePos === -1) return null;
+
+  return scope === 'i'
+    ? { startCol: openPos + 1, endCol: closePos }
+    : { startCol: openPos, endCol: closePos + 1 };
+}
+
+/**
+ * Resolve the range for a text-object action given `scope` and `target`.
+ * Returns { startCol, endCol } or null if the object cannot be found.
+ */
+function resolveTextObjectRange(
+  line: string,
+  col: number,
+  scope: 'i' | 'a',
+  target: string,
+): { startCol: number; endCol: number } | null {
+  switch (target) {
+    case 'w':
+      return findWordTextObject(line, col, scope);
+    case '"':
+    case "'":
+    case '`':
+      return findQuoteTextObject(line, col, scope, target);
+    case '(':
+    case ')':
+      return findBracketTextObject(line, col, scope, '(', ')');
+    case '[':
+    case ']':
+      return findBracketTextObject(line, col, scope, '[', ']');
+    case '{':
+    case '}':
+      return findBracketTextObject(line, col, scope, '{', '}');
+    default:
+      return null;
+  }
 }
 
 export function handleVimAction(
@@ -1838,6 +2024,49 @@ export function handleVimAction(
           preferredCol: null,
         });
       }
+    }
+
+    case 'vim_delete_text_object':
+    case 'vim_change_text_object':
+    case 'vim_yank_text_object': {
+      const { scope, target } = action.payload;
+      const line = lines[cursorRow] || '';
+      const range = resolveTextObjectRange(line, cursorCol, scope, target);
+      if (!range) return state;
+
+      const { startCol, endCol } = range;
+      const yankedText = toCodePoints(line).slice(startCol, endCol).join('');
+
+      if (action.type === 'vim_yank_text_object') {
+        return {
+          ...state,
+          yankRegister: { text: yankedText, linewise: false },
+        };
+      }
+
+      // Delete or change: remove the range from the buffer.
+      const nextState = detachExpandedPaste(pushUndo(state));
+      const newState = replaceRangeInternal(
+        nextState,
+        cursorRow,
+        startCol,
+        cursorRow,
+        endCol,
+        '',
+      );
+
+      if (action.type === 'vim_delete_text_object') {
+        return {
+          ...clampNormalCursor(newState),
+          yankRegister: { text: yankedText, linewise: false },
+        };
+      }
+
+      // vim_change_text_object: stay at startCol, caller switches to INSERT.
+      return {
+        ...newState,
+        yankRegister: { text: yankedText, linewise: false },
+      };
     }
 
     default: {

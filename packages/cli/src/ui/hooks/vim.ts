@@ -71,6 +71,9 @@ const CMD_TYPES = {
   YANK_TO_EOL: 'y$',
   PASTE_AFTER: 'p',
   PASTE_BEFORE: 'P',
+  DELETE_TEXT_OBJECT: 'dtobj',
+  CHANGE_TEXT_OBJECT: 'ctobj',
+  YANK_TEXT_OBJECT: 'ytobj',
 } as const;
 
 type PendingFindOp = {
@@ -81,8 +84,9 @@ type PendingFindOp = {
 
 const createClearPendingState = () => ({
   count: 0,
-  pendingOperator: null as 'g' | 'd' | 'c' | 'dg' | 'cg' | null,
+  pendingOperator: null as 'g' | 'd' | 'c' | 'y' | 'dg' | 'cg' | null,
   pendingFindOp: undefined as PendingFindOp | undefined,
+  pendingTextObjectPrefix: null as 'i' | 'a' | null,
 });
 
 type VimState = {
@@ -90,6 +94,7 @@ type VimState = {
   count: number;
   pendingOperator: 'g' | 'd' | 'c' | 'y' | 'dg' | 'cg' | null;
   pendingFindOp: PendingFindOp | undefined;
+  pendingTextObjectPrefix: 'i' | 'a' | null;
   lastCommand: { type: string; count: number; char?: string } | null;
   lastFind: { op: 'f' | 'F' | 't' | 'T'; char: string } | undefined;
 };
@@ -104,6 +109,7 @@ type VimAction =
       operator: 'g' | 'd' | 'c' | 'y' | 'dg' | 'cg' | null;
     }
   | { type: 'SET_PENDING_FIND_OP'; pendingFindOp: PendingFindOp | undefined }
+  | { type: 'SET_PENDING_TEXT_OBJECT_PREFIX'; prefix: 'i' | 'a' | null }
   | {
       type: 'SET_LAST_FIND';
       find: { op: 'f' | 'F' | 't' | 'T'; char: string } | undefined;
@@ -120,6 +126,7 @@ const initialVimState: VimState = {
   count: 0,
   pendingOperator: null,
   pendingFindOp: undefined,
+  pendingTextObjectPrefix: null,
   lastCommand: null,
   lastFind: undefined,
 };
@@ -144,6 +151,9 @@ const vimReducer = (state: VimState, action: VimAction): VimState => {
 
     case 'SET_PENDING_FIND_OP':
       return { ...state, pendingFindOp: action.pendingFindOp };
+
+    case 'SET_PENDING_TEXT_OBJECT_PREFIX':
+      return { ...state, pendingTextObjectPrefix: action.prefix };
 
     case 'SET_LAST_FIND':
       return { ...state, lastFind: action.find };
@@ -456,6 +466,40 @@ export function useVim(buffer: TextBuffer, onSubmit?: (value: string) => void) {
           break;
         }
 
+        case CMD_TYPES.DELETE_TEXT_OBJECT: {
+          if (char && char.length >= 2) {
+            const scopeChar = char[0];
+            const target = char.slice(1);
+            if (scopeChar === 'i' || scopeChar === 'a') {
+              buffer.vimDeleteTextObject(scopeChar, target);
+            }
+          }
+          break;
+        }
+
+        case CMD_TYPES.CHANGE_TEXT_OBJECT: {
+          if (char && char.length >= 2) {
+            const scopeChar = char[0];
+            const target = char.slice(1);
+            if (scopeChar === 'i' || scopeChar === 'a') {
+              buffer.vimChangeTextObject(scopeChar, target);
+              updateMode('INSERT');
+            }
+          }
+          break;
+        }
+
+        case CMD_TYPES.YANK_TEXT_OBJECT: {
+          if (char && char.length >= 2) {
+            const scopeChar = char[0];
+            const target = char.slice(1);
+            if (scopeChar === 'i' || scopeChar === 'a') {
+              buffer.vimYankTextObject(scopeChar, target);
+            }
+          }
+          break;
+        }
+
         default:
           return false;
       }
@@ -684,7 +728,11 @@ export function useVim(buffer: TextBuffer, onSubmit?: (value: string) => void) {
       // Handle NORMAL mode
       if (state.mode === 'NORMAL') {
         if (keyMatchers[Command.ESCAPE](normalizedKey)) {
-          if (state.pendingOperator || state.pendingFindOp) {
+          if (
+            state.pendingOperator ||
+            state.pendingFindOp ||
+            state.pendingTextObjectPrefix
+          ) {
             dispatch({ type: 'CLEAR_PENDING_STATES' });
             lastEscapeTimestampRef.current = 0;
             return true; // Handled by vim
@@ -713,6 +761,49 @@ export function useVim(buffer: TextBuffer, onSubmit?: (value: string) => void) {
         }
 
         const repeatCount = getCurrentCount();
+
+        // Handle pending text-object prefix (second key of diw / ci" / ya( etc.)
+        if (
+          state.pendingOperator !== null &&
+          state.pendingTextObjectPrefix !== null
+        ) {
+          const target = normalizedKey.sequence;
+          const scope = state.pendingTextObjectPrefix;
+          const operator = state.pendingOperator;
+          dispatch({ type: 'SET_PENDING_TEXT_OBJECT_PREFIX', prefix: null });
+          dispatch({ type: 'SET_PENDING_OPERATOR', operator: null });
+          dispatch({ type: 'CLEAR_COUNT' });
+
+          const validTargets = new Set([
+            'w',
+            '"',
+            "'",
+            '`',
+            '(',
+            ')',
+            '[',
+            ']',
+            '{',
+            '}',
+          ]);
+          if (validTargets.has(target)) {
+            const scopeTarget = scope + target;
+            let cmdType: string;
+            if (operator === 'd') {
+              cmdType = CMD_TYPES.DELETE_TEXT_OBJECT;
+            } else if (operator === 'c') {
+              cmdType = CMD_TYPES.CHANGE_TEXT_OBJECT;
+            } else {
+              cmdType = CMD_TYPES.YANK_TEXT_OBJECT;
+            }
+            executeCommand(cmdType, 1, scopeTarget);
+            dispatch({
+              type: 'SET_LAST_COMMAND',
+              command: { type: cmdType, count: 1, char: scopeTarget },
+            });
+          }
+          return true;
+        }
 
         // Handle pending find/till/replace — consume the next char as the target
         if (state.pendingFindOp !== undefined) {
@@ -1034,6 +1125,18 @@ export function useVim(buffer: TextBuffer, onSubmit?: (value: string) => void) {
           }
 
           case 'i': {
+            // If an operator is pending, 'i' starts a text-object prefix (e.g. diw, ci")
+            if (
+              state.pendingOperator === 'd' ||
+              state.pendingOperator === 'c' ||
+              state.pendingOperator === 'y'
+            ) {
+              dispatch({
+                type: 'SET_PENDING_TEXT_OBJECT_PREFIX',
+                prefix: 'i',
+              });
+              return true;
+            }
             buffer.vimInsertAtCursor();
             updateMode('INSERT');
             dispatch({ type: 'CLEAR_COUNT' });
@@ -1041,6 +1144,18 @@ export function useVim(buffer: TextBuffer, onSubmit?: (value: string) => void) {
           }
 
           case 'a': {
+            // If an operator is pending, 'a' starts a text-object prefix (e.g. daw, ca")
+            if (
+              state.pendingOperator === 'd' ||
+              state.pendingOperator === 'c' ||
+              state.pendingOperator === 'y'
+            ) {
+              dispatch({
+                type: 'SET_PENDING_TEXT_OBJECT_PREFIX',
+                prefix: 'a',
+              });
+              return true;
+            }
             // Enter INSERT mode after current position
             buffer.vimAppendAtCursor();
             updateMode('INSERT');
@@ -1502,6 +1617,7 @@ export function useVim(buffer: TextBuffer, onSubmit?: (value: string) => void) {
       state.count,
       state.pendingOperator,
       state.pendingFindOp,
+      state.pendingTextObjectPrefix,
       state.lastCommand,
       state.lastFind,
       dispatch,

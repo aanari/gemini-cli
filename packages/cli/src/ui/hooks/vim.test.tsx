@@ -214,6 +214,9 @@ describe('useVim hook', () => {
       vimYankToEndOfLine: vi.fn(),
       vimPasteAfter: vi.fn(),
       vimPasteBefore: vi.fn(),
+      vimDeleteTextObject: vi.fn(),
+      vimChangeTextObject: vi.fn(),
+      vimYankTextObject: vi.fn(),
       // Additional properties for transformations
       transformedToLogicalMaps: lines.map(() => []),
       visualToTransformedMap: [],
@@ -2594,6 +2597,198 @@ describe('useVim hook', () => {
         payload: { count: 1 },
       });
       expect(state.lines[0]).toContain('hello');
+    });
+  });
+
+  describe('Text-object key sequences', () => {
+    const exitInsertModeLocal = (result: {
+      current: { handleInput: (key: Key) => boolean };
+    }) => {
+      act(() => {
+        result.current.handleInput(
+          createKey({ sequence: '\u001b', name: 'escape' }),
+        );
+      });
+    };
+
+    it('should call vimDeleteTextObject with scope=i target=w for diw', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'd' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'i' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'w' }));
+      });
+
+      expect(mockBuffer.vimDeleteTextObject).toHaveBeenCalledWith('i', 'w');
+      expect(result.current.mode).toBe('NORMAL');
+    });
+
+    it('should call vimDeleteTextObject with scope=a target=w for daw', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'd' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'a' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'w' }));
+      });
+
+      expect(mockBuffer.vimDeleteTextObject).toHaveBeenCalledWith('a', 'w');
+    });
+
+    it('should call vimDeleteTextObject with scope=i target=" for di"', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'd' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'i' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: '"' }));
+      });
+
+      expect(mockBuffer.vimDeleteTextObject).toHaveBeenCalledWith('i', '"');
+    });
+
+    it('should call vimDeleteTextObject with scope=i target=( for di(', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'd' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'i' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: '(' }));
+      });
+
+      expect(mockBuffer.vimDeleteTextObject).toHaveBeenCalledWith('i', '(');
+    });
+
+    it('should call vimChangeTextObject and enter INSERT for ciw', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'c' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'i' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'w' }));
+      });
+
+      expect(mockBuffer.vimChangeTextObject).toHaveBeenCalledWith('i', 'w');
+      expect(result.current.mode).toBe('INSERT');
+    });
+
+    it('should call vimChangeTextObject with scope=a for ca"', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'c' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'a' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: '"' }));
+      });
+
+      expect(mockBuffer.vimChangeTextObject).toHaveBeenCalledWith('a', '"');
+      expect(result.current.mode).toBe('INSERT');
+    });
+
+    it('should call vimYankTextObject for yiw', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'y' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'i' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'w' }));
+      });
+
+      expect(mockBuffer.vimYankTextObject).toHaveBeenCalledWith('i', 'w');
+      expect(result.current.mode).toBe('NORMAL');
+    });
+
+    it('should call vimYankTextObject with scope=a for ya(', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'y' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'a' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: '(' }));
+      });
+
+      expect(mockBuffer.vimYankTextObject).toHaveBeenCalledWith('a', '(');
+    });
+
+    it('should ignore unknown text object target gracefully', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'd' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'i' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'z' }));
+      });
+
+      // 'z' is not a valid text object target, so no buffer fn should be called
+      expect(mockBuffer.vimDeleteTextObject).not.toHaveBeenCalled();
+      expect(result.current.mode).toBe('NORMAL');
+    });
+
+    it('should clear pending state on Escape during text-object sequence', () => {
+      const { result } = renderVimHook();
+      exitInsertModeLocal(result);
+
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'd' }));
+      });
+      act(() => {
+        result.current.handleInput(createKey({ sequence: 'i' }));
+      });
+      // Escape before the target key
+      act(() => {
+        result.current.handleInput(
+          createKey({ sequence: '\u001b', name: 'escape' }),
+        );
+      });
+
+      expect(result.current.mode).toBe('NORMAL');
+      expect(mockBuffer.vimDeleteTextObject).not.toHaveBeenCalled();
     });
   });
 });

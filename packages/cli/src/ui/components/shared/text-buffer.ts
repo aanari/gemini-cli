@@ -1732,6 +1732,18 @@ export type TextBufferAction =
   | { type: 'vim_paste_after'; payload: { count: number } }
   | { type: 'vim_paste_before'; payload: { count: number } }
   | {
+      type: 'vim_delete_text_object';
+      payload: { scope: 'i' | 'a'; target: string };
+    }
+  | {
+      type: 'vim_change_text_object';
+      payload: { scope: 'i' | 'a'; target: string };
+    }
+  | {
+      type: 'vim_yank_text_object';
+      payload: { scope: 'i' | 'a'; target: string };
+    }
+  | {
       type: 'toggle_paste_expansion';
       payload: { id: string; row: number; col: number };
     };
@@ -1750,6 +1762,15 @@ function textBufferReducerLogic(
 
   const currentLine = (r: number): string => state.lines[r] ?? '';
   const currentLineLen = (r: number): number => cpLen(currentLine(r));
+
+  // Text-object actions are handled here to keep the exhaustive switch below tidy.
+  if (
+    action.type === 'vim_delete_text_object' ||
+    action.type === 'vim_change_text_object' ||
+    action.type === 'vim_yank_text_object'
+  ) {
+    return handleVimAction(state, action as VimAction);
+  }
 
   switch (action.type) {
     case 'set_text': {
@@ -3223,6 +3244,27 @@ export function useTextBuffer({
     dispatch({ type: 'vim_paste_before', payload: { count } });
   }, []);
 
+  const vimDeleteTextObject = useCallback(
+    (scope: 'i' | 'a', target: string): void => {
+      dispatch({ type: 'vim_delete_text_object', payload: { scope, target } });
+    },
+    [],
+  );
+
+  const vimChangeTextObject = useCallback(
+    (scope: 'i' | 'a', target: string): void => {
+      dispatch({ type: 'vim_change_text_object', payload: { scope, target } });
+    },
+    [],
+  );
+
+  const vimYankTextObject = useCallback(
+    (scope: 'i' | 'a', target: string): void => {
+      dispatch({ type: 'vim_yank_text_object', payload: { scope, target } });
+    },
+    [],
+  );
+
   const openInExternalEditor = useCallback(async (): Promise<void> => {
     const tmpDir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'gemini-edit-'));
     const filePath = pathMod.join(tmpDir, 'buffer.txt');
@@ -3698,6 +3740,9 @@ export function useTextBuffer({
       vimYankToEndOfLine,
       vimPasteAfter,
       vimPasteBefore,
+      vimDeleteTextObject,
+      vimChangeTextObject,
+      vimYankTextObject,
     }),
     [
       lines,
@@ -3801,6 +3846,9 @@ export function useTextBuffer({
       vimYankToEndOfLine,
       vimPasteAfter,
       vimPasteBefore,
+      vimDeleteTextObject,
+      vimChangeTextObject,
+      vimYankTextObject,
     ],
   );
   return returnValue;
@@ -4177,4 +4225,10 @@ export interface TextBuffer {
   vimPasteAfter: (count: number) => void;
   /** Paste the unnamed register before cursor (vim 'P') */
   vimPasteBefore: (count: number) => void;
+  /** Delete a text object and populate the yank register (vim 'diw', 'di"', etc.) */
+  vimDeleteTextObject: (scope: 'i' | 'a', target: string) => void;
+  /** Delete a text object and enter INSERT mode (vim 'ciw', 'ci"', etc.) */
+  vimChangeTextObject: (scope: 'i' | 'a', target: string) => void;
+  /** Yank a text object into the unnamed register (vim 'yiw', 'yi"', etc.) */
+  vimYankTextObject: (scope: 'i' | 'a', target: string) => void;
 }
